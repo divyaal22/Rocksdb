@@ -1,12 +1,3 @@
-
-AB testing 
-
-Multi Variate testing
-
-nON  OVERLAPPING 
-
-
-
 RocksDB - Useful () JVM - Off heap memory
 1. Rocksdb runs in the same process as app code 
 2. Each app will have its own rocks db
@@ -133,6 +124,7 @@ Read Path -
  Block Cache - 
  It allocates block cache per column family - Inmemmory structure. It can be really large 
  setBlockCache(LRUCache(cacheSizeInBytes))  default 8MiB - Often in GiB
+ 
 
 
 
