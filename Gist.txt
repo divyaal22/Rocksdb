@@ -1,0 +1,151 @@
+
+AB testing 
+
+Multi Variate testing
+
+nON  OVERLAPPING 
+
+
+
+RocksDB - Useful () JVM - Off heap memory
+1. Rocksdb runs in the same process as app code 
+2. Each app will have its own rocks db
+3. Isolation - race conditions will not happen
+4. No coordination (building systems that avoid )
+5. Local access is very fast without n/w call (Local disk)
+6. Total control over the system. 
+
+Disadvantages
+
+1. Monitoring & tuning is our responsibility
+2. No persistant storage
+3. No failover or no availability & no distributed
+4. More of a system building block
+
+
+Inmemory cache or sqllite3
+
+But scales beyond instance memory
+
+Application patterns-
+
+1. Sharded kafka/stream processor - Blackboard
+
+App storage - 40 gb max, save checkpoints to TOSS
+
+2. Resilient READ-ONLY apis
+ 
+Alternative to autobahn, expands beyond memory.
+
+3. Disk-Backed OFF Heap Cache
+
+
+Anti - Application patterns-
+
+1. Not a source of truth (Postgres/Cassandra/Mongo)
+
+API's
+
+1. No types and schemas. 
+2. Keys and Values are byte arrays
+3. Get and PUT
+4. Batch
+5. Iterator - Key sort order is important to understand when iterating
+6. snapshots - zipped or tar'ed to TOSS
+7. ColumnFamiles - similar to table that can be tuned individually
+8. Transactions - Persist all keys/values or none
+9. ttl - Not that great
+
+Architectural 
+
+BTREE - Optimized for reading but not writing
+
+LSM Tree - Log structured merge tree - nosql 
+
+WAL - 
+Mem Tables
+SST files 
+
+SST files imp - 
+ 1. LMS Building block. Stored string table
+ 2.  Sorted immutable maps of keys and values
+ 3. keys and values are arbitary byte arrays  Compaction and merging values - Latest survives.
+
+ Block Size.
+
+ 1. SST Files - use block compression
+ Larger block size - slower to read but better compression, smaller indexes. The default block size is too small 4kib, hence better to have between 16 - 256kib.
+The biggest lever for read/write/space tuning.
+
+2. SSTable Index 
+Each SST has sparse in memory index pointing at each block - it allows for efficient seeking.
+
+Bloom filters - Ribbon filters.
+
+Embedded in SST files and not on index.
+They are probabilistic data structures used to test if an element  definitely exists or likley exists. 
+Enable with `setFilterPolicy(BloomFilter(bloomBitsPerKey))`
+bloomBitsPerKey = 10 // ~1% false positives
+Used only for point lookups not for iterators
+
+Write Path -
+  WAL - Write ahead log - Used for recontructing after a crash.
+  For emphimeral rocksdb instances - Disable ths feature.
+  Every write flushed to disk before returning.
+  writeOptions().setDiableWal(true)
+
+  Memtable - WriteBufferSize - default 64MiB 
+  Commonly set b/w 16 to 256 MiB. In-memory data structure that holds data before it’s flushed into an SStable, the implementation may use a RB Tree, a skiplist, a HashLinkList. OpenMem table fills up it becomes immutable SStable	 and is replaced with new open Memtable.
+  maxWriteBufferNumber Default 2 Commonly increased.
+  Common implementation is SkipList(binary Search) by default
+  Vector another alternative
+
+  Level 0 - 
+
+  Background threads flush filled up memtable to SST files. As the files are sorted and the String files are sorted the reads are also very fast. The write is very fast with sequential I/O
+  Eash flushed memTable becomes new segement SST file in level 0
+  But level 0 SST files can have overlapping key ranges and within level 0 the keys are not sorted.
+
+  Level 1 - 
+
+  Level0FileCompactionTrigger default = 4. Once 4 sst files are accumulated it trigger a compaction.
+  If the writes are faster than you can slow down writes no. of files with below triggers 
+  level0SlowdownWritesTrigger default 20 (stalling)
+  level0StopWritesTrigger default 36 - Stopping writes
+
+  Level 1..N
+  Every level is 10 times larger than the level above it. We can control the overall size of files in each level below are are few settings
+  1. maxBytesForLevelMultiplier default is 10
+  maxBytesforLevelBase default 256 MiB - Commonly <= GiB
+  L1 -> 256MiB, L2-> ~2.5 GiB, L3 -> ~25 GiB
+  Good target is 20-40 files across all levels - These files use file handles and more the file handles the app starts to slow down. We dont want 1000 files.
+  Compaction is handled by background threads
+
+
+  Deletes creates tombstones
+
+  Tombstones: the key associated with a special "tombstone" value  - Uses more space to add a marker value "tombstone" and those keys are deleted during compaction
+  A DeleteRange operation can be more write/space efficient but it is less read efficient. 
+
+
+Read Path -
+ 
+ Block Cache - 
+ It allocates block cache per column family - Inmemmory structure. It can be really large 
+ setBlockCache(LRUCache(cacheSizeInBytes))  default 8MiB - Often in GiB
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
