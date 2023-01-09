@@ -118,13 +118,95 @@ Write Path -
   Tombstones: the key associated with a special "tombstone" value  - Uses more space to add a marker value "tombstone" and those keys are deleted during compaction
   A DeleteRange operation can be more write/space efficient but it is less read efficient. 
 
-
-Read Path -
+ 
+Read Path - 1. looks at block cache, 2. Open memTable
  
  Block Cache - 
  It allocates block cache per column family - Inmemmory structure. It can be really large 
- setBlockCache(LRUCache(cacheSizeInBytes))  default 8MiB - Often in GiB
- 
+ setBlockCache(LRUCache(cacheSizeInBytes))  default 8MiB  is very tiny hence often set it at GiB's to get better performance.
+
+ It holds uncompressed blocks from SST files. It can be a big performace boost to get hot keys out. Invalidated on the write of the key with the cache and the one used often is the LRU cache.
+ setBlockCache(LRUCache(cacheSizeInBytes)) - 
+
+ If the key is a miss within block cache it looks at the open memtable where we are writing. Next we look at the closed SST files. First all Level 0 files from newest to the oldest. Bloom filters speed this lookup. SST files in Level 0 have overlap keys
+
+ Level 1-N
+
+ Levels >0 do not have any overlap keys. Compaction or dedup is already complete. Determine the sst file that can have the key using the index within the bloom filter . If the key might be present in a sst file it decompresses the block and puts it into a block cache.
+
+
+ SST file comression -
+
+ Each sst file can have compression associated with it. Not worth comressing level 0, as it can cause write stalls as we want the level 0 files to be very very fast.
+
+ Recommendation is to use zstd for the bottom level (best compression, more cpu) and lz4 for everything else.
+
+ Rocks DB Stats about the size of each level - 
+
+ rocksDb.getProperty(rockDb.getDefaultColumnFamily(), "rocksDb.stats")
+
+ L0, L1, L2, Sum (How many files, what is the tital size written) values accross all levels.
+
+ Compaction can be explicity requested at each level and it is run as a background process. 
+
+ rocksDb.compactRange(rockDb.getDefaultColumnFamily())
+ rocksDb.getProperty(rockDb.getDefaultColumnFamily(), "rocksDb.stats")
+
+ Flushing a skiplist MemTable will remove redundant keys. If same keys are added to a memTable multiple times during the process of compaction all the redunant keys are removed and only the recent value to flushed to a SST file.
+
+ Read/Write and Space amplification RUM Conjecture - wHITE PAPER
+
+  Trade off should be made between Read, Update and Memory(Space) overheads. 
+  1. Read + Update - Trade space for cheap reads and writes
+  2. Memory + Update - Trade slow reads for fast writes and low space
+  3. Read + Memory - Trade slow writes for fast reads and low space
+
+  Rocks DB uses memory is 3 ways. Unlike JVM where you can define the memory, it is difficult to decern where the levers are to make it space efficient. (to make it not use too much memory)
+
+  1. Block cache - Uncompressed block cache for read operations 
+  2. Memtables - writes buffers that each new value is written 
+  3. SST files which contains the indexes and bloom/ribbon filters to find keys within each file.
+
+  All the above are inmemory and they are independent & per column family. But they can be consolidated and the indexes and filters into block cache and pin them so that they're high priority and they can be used to explicity allocate memory in GiB's for for my block cache and to make sure that  indexes and filters actually in fit within that one gig of byte of memory and don't leak and don't run the instance out of memory. This is a powerful technique.
+
+  setBlockCache(LRUCache(1024 * 1024 * 1024))
+  cacheIndexAndFilterBlocks = true
+  cacheIndexAndFilterBlocksWithHighPriority = true
+  pinL0FilterAndIndexBlocksInCache = true
+
+
+  Memory Allocator - Default glibc memory allocator - It is terrible. Replace it with jemalloc, allocator gives me better memory usage and it is not subject to memory leaks. 
+  # libjemalloc-dev is an alternative memory allocator that can be used by rocksdb applications
+  # to enable, add this to a child Docker container that imports this docker container in a FROM, or export via environment.properties:
+  # ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+  RUN apt-get update && apt-get install -y libjemalloc-dev rename wget
+
+  https://blog.cloudflare.com/the-effect-of-switching-to-tcmalloc-on-rocksdb-memory-use/
+
+  General recommendations -
+
+  Use small keys as significant processing time is spent merging and sorting records by key
+  Disable WAL - IF NOT REQUIRED
+  Don't compress levle 0 but use zstd compression at bottom level
+  eliminate serialization and deserialization wherever possible
+  Watch stats for write stalls
+
+  Batch writes are faster 
+  Why enable WAL - Persistant disk - If app needs the data from the disk (Not required generally as rocksdb should not be used as source of truth)
+  Why not hollow - If the data set size is lot less memory and your data needs a lot of transformation and run business logic without just a get. 
+  Isolation no sharing. Split and divide work. Listen to data by partition and make sure that business logic works along those lines.
+  
+  
+
+
+
+
+
+
+
+
+
+
 
 
 
